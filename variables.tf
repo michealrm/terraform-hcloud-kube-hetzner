@@ -567,13 +567,13 @@ variable "istio_version" {
 }
 
 variable "istio_autoscaling" {
-  description = "Enable Horizontal Pod Autoscaler for Istio."
+  description = "Enable or disable Horizontal Pod Autoscaler for Istio."
   type        = bool
   default     = true
 }
 
 variable "istio_ambient_enabled" {
-  description = "Enable Istio Ambient mode, which deploys ztunnel as a DaemonSet."
+  description = "Enable or disable Istio Ambient mode."
   type        = bool
   default     = false
 }

@@ -226,17 +226,23 @@ resource "null_resource" "kustomization" {
     content = templatefile(
       "${path.module}/templates/istio.yaml.tpl",
       {
-        version                = var.istio_version
-        values                 = indent(4, trimspace(local.istio_values))
-        target_namespace       = local.ingress_controller_namespace
-        load_balancer_name     = var.cluster_name
-        load_balancer_location = var.load_balancer_location
-        load_balancer_type     = var.load_balancer_type
-        uses_proxy_protocol    = "true"
-        lb_hostname_annotation = var.lb_hostname != "" ? "load-balancer.hetzner.cloud/hostname: \"${var.lb_hostname}\"" : ""
-        autoscaling            = var.istio_autoscaling
-        replica_count          = local.ingress_replica_count
-        max_replica_count      = var.ingress_max_replica_count
+        version                          = var.istio_version
+        values                           = indent(4, trimspace(local.istio_values))
+        target_namespace                 = local.ingress_controller_namespace
+        load_balancer_name               = local.load_balancer_name
+        load_balancer_location           = var.load_balancer_location
+        load_balancer_type               = var.load_balancer_type
+        load_balancer_disable_public_network = var.load_balancer_disable_public_network
+        load_balancer_disable_ipv6       = var.load_balancer_disable_ipv6
+        load_balancer_algorithm_type     = var.load_balancer_algorithm_type
+        load_balancer_health_check_interval = var.load_balancer_health_check_interval
+        load_balancer_health_check_timeout  = var.load_balancer_health_check_timeout
+        load_balancer_health_check_retries  = var.load_balancer_health_check_retries
+        uses_proxy_protocol              = !local.using_klipper_lb
+        lb_hostname                      = var.lb_hostname
+        autoscaling                      = var.istio_autoscaling
+        replica_count                    = local.ingress_replica_count
+        max_replica_count                = var.ingress_max_replica_count
       }
     )
     destination = "/var/post_install/istio.yaml"
@@ -396,9 +402,7 @@ resource "null_resource" "kustomization" {
         done
       EOF
       EOT
-      ]
-      ,
-
+      ],
       [
         # Ready, set, go for the kustomization
         "kubectl apply -k /var/post_install",
@@ -409,14 +413,39 @@ resource "null_resource" "kustomization" {
       ],
       local.has_external_load_balancer ? [] : [
         <<-EOT
-      timeout 360 bash <<EOF
-      until [ -n "\$(kubectl get -n ${local.ingress_controller_namespace} service/${lookup(local.ingress_controller_service_names, var.ingress_controller)} --output=jsonpath='{.status.loadBalancer.ingress[0].${var.lb_hostname != "" ? "hostname" : "ip"}}' 2> /dev/null)" ]; do
-          echo "Waiting for load-balancer to get an IP..."
-          sleep 2
-      done
-      EOF
-      EOT
-    ])
+        # Wait for appropriate load balancer IP based on ingress controller
+        if [ "${var.ingress_controller}" = "istio" ]; then
+          # For Istio, we need to explicitly wait for the gateway deployment first
+          echo "Waiting for Istio ingress gateway deployment to be ready..."
+          timeout 600 bash <<EOF
+            until kubectl wait --for=condition=available --timeout=10s -n ${local.ingress_controller_namespace} deployment/istio-ingressgateway 2>/dev/null; do
+              echo "Waiting for Istio ingress gateway deployment..."
+              sleep 5
+            done
+          EOF
+          
+          # Now wait for the Istio ingress gateway service to get an IP
+          echo "Waiting for Istio ingress gateway to get a load balancer IP..."
+          timeout 360 bash <<EOF
+            until [ -n "\$(kubectl get -n ${local.ingress_controller_namespace} service/istio-ingressgateway --output=jsonpath='{.status.loadBalancer.ingress[0].${var.lb_hostname != "" ? "hostname" : "ip"}}' 2> /dev/null)" ]; do
+              echo "Waiting for Istio ingress gateway load-balancer to get an IP..."
+              sleep 5
+            done
+          EOF
+        elif [ "${var.ingress_controller}" != "none" ]; then
+          # For traditional ingress controllers
+          timeout 360 bash <<EOF
+            until [ -n "\$(kubectl get -n ${local.ingress_controller_namespace} service/${lookup(local.ingress_controller_service_names, var.ingress_controller)} --output=jsonpath='{.status.loadBalancer.ingress[0].${var.lb_hostname != "" ? "hostname" : "ip"}}' 2> /dev/null)" ]; do
+                echo "Waiting for load-balancer to get an IP..."
+                sleep 2
+            done
+          EOF
+        else
+          echo "Skipping load balancer check when no ingress controller is enabled..."
+        fi
+        EOT
+      ]
+    )
   }
 
   depends_on = [

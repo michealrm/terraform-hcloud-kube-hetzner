@@ -39,3 +39,12 @@ data "hcloud_ssh_keys" "keys_by_selector" {
   count         = length(var.ssh_hcloud_key_label) > 0 ? 1 : 0
   with_selector = var.ssh_hcloud_key_label
 }
+
+data "kubernetes_service" "ingress_service" {
+  count = var.ingress_controller == "none" || var.ingress_controller == "istio" || local.has_external_load_balancer ? 0 : 1
+  
+  metadata {
+    name      = local.ingress_controller_service_names[var.ingress_controller]
+    namespace = local.ingress_controller_namespace
+  }
+}

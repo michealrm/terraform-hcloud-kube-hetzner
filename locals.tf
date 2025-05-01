@@ -241,17 +241,22 @@ locals {
   load_balancer_name         = "${var.cluster_name}-${var.ingress_controller}"
 
   ingress_controller_service_names = {
-    "traefik" = "traefik"
-    "nginx"   = "nginx-ingress-nginx-controller"
-    "haproxy" = "haproxy-kubernetes-ingress"
-    "istio"   = "istio-ingress"
-    "none"    = ""
+    traefik = "traefik"
+    nginx   = "ingress-nginx-controller"
+    haproxy = "haproxy-kubernetes-ingress"
+    istio   = "istio-ingressgateway"
+    none    = ""
   }
 
+  # Add the missing ingress_controller_namespace variable
+  ingress_controller_namespace = lookup(local.default_ingress_namespace_mapping, var.ingress_controller, var.ingress_controller)
+
+  # Resources to install for each ingress controller
   ingress_controller_install_resources = {
     "traefik" = ["traefik_ingress.yaml"]
     "nginx"   = ["nginx_ingress.yaml"]
     "haproxy" = ["haproxy_ingress.yaml"]
+    "istio"   = ["istio.yaml"]
   }
 
   default_ingress_namespace_mapping = {
@@ -260,7 +265,6 @@ locals {
     "haproxy" = "haproxy"
   }
 
-  ingress_controller_namespace = var.ingress_target_namespace != "" ? var.ingress_target_namespace : var.ingress_controller
   ingress_replica_count        = (var.ingress_replica_count > 0) ? var.ingress_replica_count : (local.agent_count > 2) ? 3 : (local.agent_count == 2) ? 2 : 1
   ingress_max_replica_count    = (var.ingress_max_replica_count > local.ingress_replica_count) ? var.ingress_max_replica_count : local.ingress_replica_count
 
@@ -790,51 +794,38 @@ kured_options = merge({
   "reboot-sentinel" : "/sentinel/reboot-required"
 }, var.kured_options)
 
-istio_values = var.istio_values != "" ? var.istio_values : yamlencode({
-  pilot = {
-    autoscaleEnabled = var.istio_autoscaling
-    autoscaleMin     = local.ingress_replica_count
-    autoscaleMax     = var.ingress_max_replica_count
-    resources = {
-      requests = {
-        cpu    = "300m"
-        memory = "1Gi"
-      }
-      limits = {
-        cpu    = "500m"
-        memory = "2Gi"
-      }
-    }
-  }
-  global = {
-    proxy = {
-      resources = {
-        requests = {
-          cpu    = "100m"
-          memory = "128Mi"
-        }
-        limits = {
-          cpu    = "2000m"
-          memory = "1024Mi"
-        }
-      }
-    }
-  }
-  meshConfig = {
-    accessLogFile      = "/dev/stdout"
-    enableTracing      = false
-    accessLogEncoding  = "TEXT"
-    defaultConfig = {
-      proxyMetadata = {
-        ISTIO_META_DNS_CAPTURE         = "true"
-        ISTIO_META_DNS_AUTO_ALLOCATE   = "true"
-      }
-    }
-  }
-  ztunnel = {
-    enabled = var.istio_ambient_enabled
-  }
-})
+istio_values = var.istio_values != "" ? var.istio_values : <<EOT
+pilot:
+  autoscaleEnabled: ${var.istio_autoscaling}
+  autoscaleMin: ${local.ingress_replica_count}
+  autoscaleMax: ${local.ingress_max_replica_count}
+  resources:
+    requests:
+      cpu: "300m"
+      memory: "1Gi"
+    limits:
+      cpu: "500m"
+      memory: "2Gi"
+global:
+  proxy:
+    resources:
+      requests:
+        cpu: "100m"
+        memory: "128Mi"
+      limits:
+        cpu: "2000m"
+        memory: "1024Mi"
+meshConfig:
+  accessLogFile: "/dev/stdout"
+  enableTracing: false
+  accessLogEncoding: "TEXT"
+  defaultConfig:
+    proxyMetadata:
+      ISTIO_META_DNS_CAPTURE: "true"
+      ISTIO_META_DNS_AUTO_ALLOCATE: "true"
+ztunnel:
+  enabled: ${var.istio_ambient_enabled}
+EOT
 
 k3s_registries_update_script = <<EOF
 DATE=`date +%Y-%m-%d_%H-%M-%S`
