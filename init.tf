@@ -248,6 +248,63 @@ resource "null_resource" "kustomization" {
     destination = "/var/post_install/istio.yaml"
   }
 
+  # Upload istio debug script
+  provisioner "file" {
+    content = <<-EOT
+#!/bin/bash
+# Istio installation debug helper
+
+function debug_istio_installation() {
+  echo "=== Debugging Istio Installation ==="
+  echo "Checking Helm resources..."
+  kubectl get helmcharts,helmreleases -A
+  
+  echo "Checking Istio pods..."
+  kubectl get pods -n kube-system -l app=istio -o wide
+  
+  echo "Checking Istio HelmChart resources..."
+  kubectl get helmchart -n kube-system istio-base istio-ingress istiod -o yaml
+  
+  echo "Checking Helm install pods..."
+  kubectl get pods -n kube-system -l owner=helm -o wide
+  
+  echo "Checking logs from failed Helm install pods..."
+  for pod in $(kubectl get pods -n kube-system -l owner=helm --field-selector=status.phase!=Running -o name); do
+    echo "=== Logs from $pod ==="
+    kubectl logs -n kube-system $pod --all-containers
+  done
+  
+  echo "Checking events..."
+  kubectl get events -n kube-system --sort-by='.lastTimestamp' | grep -i 'istio\|helm'
+  
+  echo "=== End of Istio Debug Info ==="
+}
+
+function fix_istio_installation() {
+  echo "=== Attempting to fix Istio Installation ==="
+  
+  # Delete any failed Helm install jobs
+  echo "Cleaning up failed Helm install pods..."
+  kubectl delete pods -n kube-system -l owner=helm --field-selector=status.phase!=Running
+  
+  # Ensure CRDs are installed first
+  echo "Installing Istio CRDs separately..."
+  kubectl apply -f https://raw.githubusercontent.com/istio/istio/${var.istio_version}/manifests/charts/base/crds/crd-all.gen.yaml
+  
+  # Retry the installation with increased timeouts
+  echo "Reapplying Istio components..."
+  kubectl apply -f /var/post_install/istio.yaml
+  
+  echo "=== Fix attempt completed ==="
+}
+
+# Export functions for use in the main script
+export -f debug_istio_installation
+export -f fix_istio_installation
+EOT
+    destination = "/var/post_install/istio_debug.sh"
+  }
+
   # Upload the CCM patch config
   provisioner "file" {
     content = templatefile(
@@ -415,6 +472,13 @@ resource "null_resource" "kustomization" {
         <<-EOT
         # Wait for appropriate load balancer IP based on ingress controller
         if [ "${var.ingress_controller}" = "istio" ]; then
+          # Source the debug helper functions
+          source /var/post_install/istio_debug.sh
+          
+          # First install Istio CRDs separately to avoid race conditions
+          echo "Pre-installing Istio CRDs..."
+          kubectl apply -f https://raw.githubusercontent.com/istio/istio/${var.istio_version}/manifests/charts/base/crds/crd-all.gen.yaml
+          
           # First wait for the Istio HelmChart resources to be created with improved observability
           echo "Waiting for Istio HelmCharts to be processed..."
           timeout 900 bash <<'EOF'
@@ -425,54 +489,65 @@ resource "null_resource" "kustomization" {
               kubectl get helmchart -n kube-system istio-base istio-ingress istiod 2>/dev/null || echo "No HelmCharts found yet"
               echo "Pods:"
               kubectl get pods -n kube-system -l app=istio 2>/dev/null || echo "No Istio pods found yet"
-              echo "Events (last 5):"
-              kubectl get events -n kube-system --sort-by='.lastTimestamp' 2>/dev/null | grep -i 'istio\|helm' | tail -5 || echo "No relevant events found"
+              echo "Helm install pods:"
+              kubectl get pods -n kube-system -l owner=helm 2>/dev/null || echo "No Helm install pods found yet"
+              echo "Events (last 10):"
+              kubectl get events -n kube-system --sort-by='.lastTimestamp' 2>/dev/null | grep -i 'istio\|helm' | tail -10 || echo "No relevant events found"
               echo "-----------------------------------"
             }
             
             # Wait for HelmCharts to be created with status updates every 15 seconds
-            until kubectl get helmchart -n kube-system istio-base istio-ingress istiod 2>/dev/null; do
-              echo "Waiting for Istio HelmCharts to be created... ($(date))"
+            until kubectl get helmchart -n kube-system istio-base 2>/dev/null; do
+              echo "Waiting for istio-base HelmChart to be created... ($(date))"
               show_istio_status
               sleep 15
             done
-            echo "Istio HelmCharts created, waiting for them to be processed..."
+            echo "istio-base HelmChart created, waiting for it to be processed..."
             
-            # Wait for the HelmCharts to be processed with status updates
+            # Wait for the istio-base HelmChart to be processed with status updates
             echo "Waiting for istio-base HelmChart to be ready..."
-            kubectl wait --for=condition=Ready --timeout=600s helmchart -n kube-system istio-base &
-            base_pid=$!
-            
-            # Show status while waiting
-            while kill -0 $base_pid 2>/dev/null; do
-              show_istio_status
-              sleep 15
-            done
-            wait $base_pid
+            kubectl wait --for=condition=Ready --timeout=600s helmchart -n kube-system istio-base || {
+              echo "istio-base HelmChart failed to become ready, running diagnostics..."
+              debug_istio_installation
+              fix_istio_installation
+              kubectl wait --for=condition=Ready --timeout=300s helmchart -n kube-system istio-base
+            }
             echo "istio-base HelmChart is ready"
             
-            echo "Waiting for istiod HelmChart to be ready..."
-            kubectl wait --for=condition=Ready --timeout=600s helmchart -n kube-system istiod &
-            istiod_pid=$!
-            
-            # Show status while waiting
-            while kill -0 $istiod_pid 2>/dev/null; do
+            # Wait for istiod HelmChart to be created
+            until kubectl get helmchart -n kube-system istiod 2>/dev/null; do
+              echo "Waiting for istiod HelmChart to be created... ($(date))"
               show_istio_status
               sleep 15
             done
-            wait $istiod_pid
+            echo "istiod HelmChart created, waiting for it to be processed..."
+            
+            # Wait for the istiod HelmChart to be processed
+            echo "Waiting for istiod HelmChart to be ready..."
+            kubectl wait --for=condition=Ready --timeout=600s helmchart -n kube-system istiod || {
+              echo "istiod HelmChart failed to become ready, running diagnostics..."
+              debug_istio_installation
+              fix_istio_installation
+              kubectl wait --for=condition=Ready --timeout=300s helmchart -n kube-system istiod
+            }
             echo "istiod HelmChart is ready"
             
-            echo "Waiting for istio-ingress HelmChart to be ready..."
-            kubectl wait --for=condition=Ready --timeout=600s helmchart -n kube-system istio-ingress &
-            ingress_pid=$!
-            
-            # Show status while waiting
-            while kill -0 $ingress_pid 2>/dev/null; do
+            # Wait for istio-ingress HelmChart to be created
+            until kubectl get helmchart -n kube-system istio-ingress 2>/dev/null; do
+              echo "Waiting for istio-ingress HelmChart to be created... ($(date))"
               show_istio_status
               sleep 15
             done
-            wait $ingress_pid
+            echo "istio-ingress HelmChart created, waiting for it to be processed..."
+            
+            # Wait for the istio-ingress HelmChart to be processed
+            echo "Waiting for istio-ingress HelmChart to be ready..."
+            kubectl wait --for=condition=Ready --timeout=600s helmchart -n kube-system istio-ingress || {
+              echo "istio-ingress HelmChart failed to become ready, running diagnostics..."
+              debug_istio_installation
+              fix_istio_installation
+              kubectl wait --for=condition=Ready --timeout=300s helmchart -n kube-system istio-ingress
+            }
             echo "istio-ingress HelmChart is ready"
             
             echo "All Istio HelmCharts are ready"
@@ -490,30 +565,63 @@ EOF
               kubectl get deployments -n ${local.ingress_controller_namespace} 2>/dev/null || echo "No deployments found"
               echo "Pods:"
               kubectl get pods -n ${local.ingress_controller_namespace} -o wide 2>/dev/null || echo "No pods found"
+              echo "Pod details (if any):"
+              for pod in $(kubectl get pods -n ${local.ingress_controller_namespace} -l app=istio-ingressgateway -o name 2>/dev/null); do
+                echo "=== Details for $pod ==="
+                kubectl describe -n ${local.ingress_controller_namespace} $pod
+              done
               echo "Pod logs (if any):"
               kubectl logs -n ${local.ingress_controller_namespace} -l app=istio-ingressgateway --tail=20 2>/dev/null || echo "No logs available"
-              echo "Events (last 5):"
-              kubectl get events -n ${local.ingress_controller_namespace} --sort-by='.lastTimestamp' | tail -5 || echo "No events found"
+              echo "Events (last 10):"
+              kubectl get events -n ${local.ingress_controller_namespace} --sort-by='.lastTimestamp' | tail -10 || echo "No events found"
               echo "-----------------------------------"
             }
             
             # First wait for the deployment to be created with status updates
-            until kubectl get deployment -n ${local.ingress_controller_namespace} istio-ingressgateway 2>/dev/null; do
-              echo "Waiting for Istio ingress gateway deployment to be created... ($(date))"
+            attempt=1
+            max_attempts=10
+            
+            while [ $attempt -le $max_attempts ]; do
+              echo "Attempt $attempt/$max_attempts: Checking for Istio ingress gateway deployment... ($(date))"
+              
+              if kubectl get deployment -n ${local.ingress_controller_namespace} istio-ingressgateway 2>/dev/null; then
+                echo "Istio ingress gateway deployment found!"
+                break
+              fi
+              
+              # If we've reached the max attempts and still no deployment, try to fix it
+              if [ $attempt -eq $max_attempts ]; then
+                echo "Deployment not found after $max_attempts attempts, running diagnostics and attempting fix..."
+                debug_istio_installation
+                fix_istio_installation
+                
+                # Wait a bit longer for the fix to take effect
+                sleep 30
+                
+                # One final check
+                if kubectl get deployment -n ${local.ingress_controller_namespace} istio-ingressgateway 2>/dev/null; then
+                  echo "Istio ingress gateway deployment found after fix!"
+                  break
+                else
+                  echo "WARNING: Still couldn't find the deployment after fix attempts"
+                fi
+              fi
+              
               show_gateway_status
-              sleep 15
+              sleep 30
+              attempt=$((attempt+1))
             done
             
             echo "Istio ingress gateway deployment created, waiting for it to become available..."
-            kubectl wait --for=condition=available --timeout=600s deployment/istio-ingressgateway -n ${local.ingress_controller_namespace} &
-            wait_pid=$!
+            kubectl wait --for=condition=available --timeout=600s deployment/istio-ingressgateway -n ${local.ingress_controller_namespace} || {
+              echo "Deployment failed to become available, running diagnostics..."
+              debug_istio_installation
+              
+              # Try to fix and wait again
+              fix_istio_installation
+              kubectl wait --for=condition=available --timeout=300s deployment/istio-ingressgateway -n ${local.ingress_controller_namespace}
+            }
             
-            # Show status while waiting
-            while kill -0 $wait_pid 2>/dev/null; do
-              show_gateway_status
-              sleep 15
-            done
-            wait $wait_pid
             echo "Istio ingress gateway deployment is available"
 EOF
           
