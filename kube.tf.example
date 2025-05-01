@@ -495,17 +495,23 @@ module "kube-hetzner" {
   # kured_version = ""
 
   # Default is "traefik".
-  # If you want to enable the Nginx (https://kubernetes.github.io/ingress-nginx/) or HAProxy ingress controller instead of Traefik, you can set this to "nginx" or "haproxy".
-  # By the default we load optimal Traefik, Nginx or HAProxy ingress controller config for Hetzner, however you may need to tweak it to your needs, so to do,
-  # we allow you to add a traefik_values, nginx_values or haproxy_values, see towards the end of this file in the advanced section.
+  # If you want to enable the Nginx (https://kubernetes.github.io/ingress-nginx/), HAProxy ingress controller instead of Traefik, 
+  # you can set this to "nginx" or "haproxy".
+  # If you want to use Istio as an ingress controller and service mesh, set this to "istio".
+  # By default we load optimal Traefik, Nginx, HAProxy, or Istio ingress controller config for Hetzner, however you may need to tweak it to your needs.
+  # We allow you to add traefik_values, nginx_values, haproxy_values, or istio_values, see towards the end of this file in the advanced section.
   # After the cluster is deployed, you can always use HelmChartConfig definition to tweak the configuration.
-  # If you want to disable all controllers set this to "none"
+  # If you want to disable all controllers set this to "none".
   # ingress_controller = "nginx"
+  
   # Namespace in which to deploy the ingress controllers. Defaults to the ingress_controller variable, eg (haproxy, nginx, traefik, istio)
   # ingress_target_namespace = ""
 
   # You can change the number of replicas for selected ingress controller here. The default 0 means autoselecting based on number of agent nodes (1 node = 1 replica, 2 nodes = 2 replicas, 3+ nodes = 3 replicas)
   # ingress_replica_count = 1
+
+  # The maximum number of replicas to scale the ingress controller to when using autoscaling
+  # ingress_max_replica_count = 5
 
   # Use the klipperLB (similar to metalLB), instead of the default Hetzner one, that has an advantage of dropping the cost of the setup.
   # Automatically "true" in the case of single node cluster (as it does not make sense to use the Hetzner LB in that situation).
@@ -1147,17 +1153,6 @@ controller:
   /*   haproxy_values = <<EOT
   EOT */
 
-  # Rancher, all Rancher helm values can be found at https://rancher.com/docs/rancher/v2.5/en/installation/install-rancher-on-k8s/chart-options/
-  # The following is an example, please note that the current indentation inside the EOT is important.
-  /*   rancher_values = <<EOT
-ingress:
-  tls:
-    source: "rancher"
-hostname: "rancher.example.com"
-replicas: 1
-bootstrapPassword: "supermario"
-  EOT */
-
   # If you want to use a specific Istio helm chart version, set it below; otherwise, leave it as-is for the latest version.
   # See https://github.com/istio/istio/releases for available versions.
   # istio_version = "1.22.0"
@@ -1167,13 +1162,16 @@ bootstrapPassword: "supermario"
   # istio_autoscaling = false
 
   # If you want to enable Istio Ambient mode, set this to true. Default is false.
-  # This deploys the ztunnel component as a DaemonSet on all nodes.
+  # This deploys the ztunnel component as a DaemonSet on all nodes, enabling "ambient" (sidecar-less) service mesh capabilities.
+  # For more information about Ambient mode, see: https://istio.io/latest/docs/ops/ambient/
   # istio_ambient_enabled = true
 
   # Istio, all Istio helm values can be found at https://github.com/istio/istio/tree/master/manifests/charts
+  # You can also check the Istio documentation at https://istio.io/latest/docs/ for configuration options and features
   # The following is an example, please note that the current indentation inside the EOT is important.
   /*   istio_values = <<EOT
 pilot:
+  # Autoscaling settings for istiod (control plane)
   autoscaleEnabled: true
   autoscaleMin: 1
   autoscaleMax: 5
@@ -1181,13 +1179,60 @@ pilot:
     requests:
       cpu: 500m
       memory: 2048Mi
+  # Enable HPA CPU utilization as a scaling metric
+  autoscaleMetric: cpu
+  
+  # Basic PodDisruptionBudget settings to ensure availability
+  PodDisruptionBudget:
+    enabled: true
+  
+# Global proxy settings apply to all data plane components
+global:
+  proxy:
+    # Configure resource requests/limits for proxy sidecars
+    resources:
+      requests:
+        cpu: 100m
+        memory: 128Mi
+      limits:
+        cpu: 2000m
+        memory: 1024Mi
+
+# Mesh configuration settings
 meshConfig:
+  # Output access logs to stdout for easier troubleshooting
   accessLogFile: /dev/stdout
+  # Log format options: TEXT, JSON
   accessLogEncoding: JSON
+  # Enable distributed tracing
   enableTracing: true
   defaultConfig:
+    # Tracing configuration
     tracing:
-      sampling: 100
+      sampling: 100  # Sample 100% of requests for tracing
+    # Proxy metadata for DNS interception and auto-allocation
+    proxyMetadata:
+      ISTIO_META_DNS_CAPTURE: "true"
+      ISTIO_META_DNS_AUTO_ALLOCATE: "true"
+
+# Configure Istio gateway (ingress)
+gateways:
+  istio-ingressgateway:
+    autoscaling:
+      enabled: true
+    serviceAnnotations:
+      app: gateway
+
+# Enable Ambient mode components
+ztunnel:
+  enabled: true
+  resources:
+    requests:
+      cpu: 100m
+      memory: 128Mi
+    limits:
+      cpu: 500m
+      memory: 512Mi
   EOT */
 
 }
