@@ -289,7 +289,7 @@ function fix_istio_installation() {
   
   # Ensure CRDs are installed first
   echo "Installing Istio CRDs separately..."
-  kubectl apply -f https://raw.githubusercontent.com/istio/istio/${var.istio_version}/manifests/charts/base/crds/crd-all.gen.yaml
+  kubectl apply -f https://raw.githubusercontent.com/istio/istio/refs/tags/${var.istio_version}/manifests/charts/base/files/crd-all.gen.yaml
   
   # Retry the installation with increased timeouts
   echo "Reapplying Istio components..."
@@ -478,7 +478,7 @@ EOT
           # First install Istio CRDs separately to avoid race conditions
           echo "Pre-installing Istio CRDs..."
           kubectl apply -f https://raw.githubusercontent.com/istio/istio/refs/tags/${var.istio_version}/manifests/charts/base/files/crd-all.gen.yaml
-          
+
           # First wait for the Istio HelmChart resources to be created with improved observability
           echo "Waiting for Istio HelmCharts to be processed..."
           timeout 900 bash <<'EOF'
