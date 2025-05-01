@@ -403,8 +403,8 @@ variable "ingress_controller" {
   description = "The name of the ingress controller."
 
   validation {
-    condition     = contains(["traefik", "nginx", "haproxy", "none"], var.ingress_controller)
-    error_message = "Must be one of \"traefik\" or \"nginx\" or \"haproxy\" or \"none\""
+    condition     = contains(["traefik", "nginx", "haproxy", "istio", "none"], var.ingress_controller)
+    error_message = "Must be one of \"traefik\" or \"nginx\" or \"haproxy\" or \"istio\" or \"none\""
   }
 }
 
