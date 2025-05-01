@@ -434,12 +434,12 @@ resource "null_resource" "kustomization" {
           EOF
         elif [ "${var.ingress_controller}" != "none" ]; then
           # For traditional ingress controllers
-          timeout 360 bash <<EOF
-            until [ -n "\$(kubectl get -n ${local.ingress_controller_namespace} service/${lookup(local.ingress_controller_service_names, var.ingress_controller)} --output=jsonpath='{.status.loadBalancer.ingress[0].${var.lb_hostname != "" ? "hostname" : "ip"}}' 2> /dev/null)" ]; do
+          timeout 360 bash <<'EOF'
+            until [ -n "$(kubectl get -n ${local.ingress_controller_namespace} service/${lookup(local.ingress_controller_service_names, var.ingress_controller)} --output=jsonpath='{.status.loadBalancer.ingress[0].${var.lb_hostname != "" ? "hostname" : "ip"}}' 2> /dev/null)" ]; do
                 echo "Waiting for load-balancer to get an IP..."
                 sleep 2
             done
-          EOF
+EOF
         else
           echo "Skipping load balancer check when no ingress controller is enabled..."
         fi
