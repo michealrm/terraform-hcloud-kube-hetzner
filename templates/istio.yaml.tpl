@@ -22,7 +22,7 @@ spec:
   targetNamespace: ${target_namespace}
   bootstrap: true
   valuesContent: |-
-${values}
+    ${values}
 ---
 apiVersion: helm.cattle.io/v1
 kind: HelmChart
