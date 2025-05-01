@@ -563,7 +563,7 @@ variable "haproxy_values" {
 variable "istio_version" {
   description = "Version of Istio helm chart. See https://github.com/istio/istio/releases for available versions."
   type        = string
-  default     = ""
+  default     = "1.25.2"
 }
 
 variable "istio_autoscaling" {
