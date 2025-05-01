@@ -415,13 +415,36 @@ resource "null_resource" "kustomization" {
         <<-EOT
         # Wait for appropriate load balancer IP based on ingress controller
         if [ "${var.ingress_controller}" = "istio" ]; then
-          # For Istio, we need to explicitly wait for the gateway deployment first
-          echo "Waiting for Istio ingress gateway deployment to be ready..."
-          timeout 600 bash <<'EOF'
-            until kubectl wait --for=condition=available --timeout=10s -n ${local.ingress_controller_namespace} deployment/istio-ingressgateway 2>/dev/null; do
-              echo "Waiting for Istio ingress gateway deployment..."
+          # First wait for the Istio HelmChart resources to be created
+          echo "Waiting for Istio HelmCharts to be processed..."
+          timeout 300 bash <<'EOF'
+            until kubectl get helmchart -n kube-system istio-base istio-ingress istiod 2>/dev/null; do
+              echo "Waiting for Istio HelmCharts to be created..."
               sleep 5
             done
+            echo "Istio HelmCharts created, waiting for them to be processed..."
+            
+            # Wait for the HelmCharts to be processed
+            kubectl wait --for=condition=Ready --timeout=300s helmchart -n kube-system istio-base
+            kubectl wait --for=condition=Ready --timeout=300s helmchart -n kube-system istiod
+            kubectl wait --for=condition=Ready --timeout=300s helmchart -n kube-system istio-ingress
+            echo "Istio HelmCharts are ready"
+EOF
+          
+          # Now wait for the Istio gateway deployment to be created and become ready
+          echo "Waiting for Istio ingress gateway deployment to be created..."
+          timeout 600 bash <<'EOF'
+            # First wait for the deployment to be created
+            until kubectl get deployment -n ${local.ingress_controller_namespace} istio-ingressgateway 2>/dev/null; do
+              echo "Waiting for Istio ingress gateway deployment to be created..."
+              kubectl get helmchart -n kube-system istio-ingress -o yaml | grep -A 5 status || true
+              kubectl get pods -n ${local.ingress_controller_namespace} || true
+              sleep 10
+            done
+            
+            echo "Istio ingress gateway deployment created, waiting for it to become available..."
+            kubectl wait --for=condition=available --timeout=300s deployment/istio-ingressgateway -n ${local.ingress_controller_namespace}
+            echo "Istio ingress gateway deployment is available"
 EOF
           
           # Now wait for the Istio ingress gateway service to get an IP
@@ -429,8 +452,10 @@ EOF
           timeout 360 bash <<'EOF'
             until [ -n "$(kubectl get -n ${local.ingress_controller_namespace} service/istio-ingressgateway --output=jsonpath='{.status.loadBalancer.ingress[0].${var.lb_hostname != "" ? "hostname" : "ip"}}' 2> /dev/null)" ]; do
               echo "Waiting for Istio ingress gateway load-balancer to get an IP..."
-              sleep 5
+              kubectl get service -n ${local.ingress_controller_namespace} istio-ingressgateway -o yaml | grep -A 10 status || true
+              sleep 10
             done
+            echo "Istio ingress gateway load balancer has an IP"
 EOF
         elif [ "${var.ingress_controller}" != "none" ]; then
           # For traditional ingress controllers
