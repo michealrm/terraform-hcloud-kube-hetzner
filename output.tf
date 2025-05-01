@@ -143,3 +143,8 @@ output "haproxy_values" {
   value       = local.haproxy_values
   sensitive   = true
 }
+
+output "istio_values" {
+  description = "Helm values.yaml used for Istio"
+  value       = local.istio_values
+}

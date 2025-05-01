@@ -499,9 +499,9 @@ module "kube-hetzner" {
   # By the default we load optimal Traefik, Nginx or HAProxy ingress controller config for Hetzner, however you may need to tweak it to your needs, so to do,
   # we allow you to add a traefik_values, nginx_values or haproxy_values, see towards the end of this file in the advanced section.
   # After the cluster is deployed, you can always use HelmChartConfig definition to tweak the configuration.
-  # If you want to disable both controllers set this to "none"
+  # If you want to disable all controllers set this to "none"
   # ingress_controller = "nginx"
-  # Namespace in which to deploy the ingress controllers. Defaults to the ingress_controller variable, eg (haproxy, nginx, traefik)
+  # Namespace in which to deploy the ingress controllers. Defaults to the ingress_controller variable, eg (haproxy, nginx, traefik, istio)
   # ingress_target_namespace = ""
 
   # You can change the number of replicas for selected ingress controller here. The default 0 means autoselecting based on number of agent nodes (1 node = 1 replica, 2 nodes = 2 replicas, 3+ nodes = 3 replicas)
@@ -1156,6 +1156,38 @@ ingress:
 hostname: "rancher.example.com"
 replicas: 1
 bootstrapPassword: "supermario"
+  EOT */
+
+  # If you want to use a specific Istio helm chart version, set it below; otherwise, leave it as-is for the latest version.
+  # See https://github.com/istio/istio/releases for available versions.
+  # istio_version = "1.22.0"
+
+  # Enable or disable Horizontal Pod Autoscaler for Istio.
+  # The default is true.
+  # istio_autoscaling = false
+
+  # If you want to enable Istio Ambient mode, set this to true. Default is false.
+  # This deploys the ztunnel component as a DaemonSet on all nodes.
+  # istio_ambient_enabled = true
+
+  # Istio, all Istio helm values can be found at https://github.com/istio/istio/tree/master/manifests/charts
+  # The following is an example, please note that the current indentation inside the EOT is important.
+  /*   istio_values = <<EOT
+pilot:
+  autoscaleEnabled: true
+  autoscaleMin: 1
+  autoscaleMax: 5
+  resources:
+    requests:
+      cpu: 500m
+      memory: 2048Mi
+meshConfig:
+  accessLogFile: /dev/stdout
+  accessLogEncoding: JSON
+  enableTracing: true
+  defaultConfig:
+    tracing:
+      sampling: 100
   EOT */
 
 }

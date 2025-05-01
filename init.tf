@@ -142,6 +142,7 @@ resource "null_resource" "kustomization" {
       local.traefik_values,
       local.nginx_values,
       local.haproxy_values,
+      local.istio_values,
       local.calico_values,
       local.cilium_values,
       local.longhorn_values,
@@ -163,6 +164,7 @@ resource "null_resource" "kustomization" {
       coalesce(var.traefik_version, "N/A"),
       coalesce(var.nginx_version, "N/A"),
       coalesce(var.haproxy_version, "N/A"),
+      coalesce(var.istio_version, "N/A"),
     ])
     options = join("\n", [
       for option, value in local.kured_options : "${option}=${value}"
@@ -217,6 +219,27 @@ resource "null_resource" "kustomization" {
         target_namespace = local.ingress_controller_namespace
     })
     destination = "/var/post_install/haproxy_ingress.yaml"
+  }
+
+  # Upload istio ingress controller config
+  provisioner "file" {
+    content = templatefile(
+      "${path.module}/templates/istio.yaml.tpl",
+      {
+        version                = var.istio_version
+        values                 = indent(4, trimspace(local.istio_values))
+        target_namespace       = local.ingress_controller_namespace
+        load_balancer_name     = var.cluster_name
+        load_balancer_location = var.load_balancer_location
+        load_balancer_type     = var.load_balancer_type
+        uses_proxy_protocol    = "true"
+        lb_hostname_annotation = var.lb_hostname != "" ? "load-balancer.hetzner.cloud/hostname: \"${var.lb_hostname}\"" : ""
+        autoscaling            = var.istio_autoscaling
+        replica_count          = local.ingress_replica_count
+        max_replica_count      = var.ingress_max_replica_count
+      }
+    )
+    destination = "/var/post_install/istio.yaml"
   }
 
   # Upload the CCM patch config

@@ -46,3 +46,10 @@ resource "local_file" "haproxy_values" {
   filename        = "haproxy_values.yaml"
   file_permission = "600"
 }
+
+resource "local_file" "istio_values" {
+  count           = var.export_values && var.ingress_controller == "istio" ? 1 : 0
+  content         = local.istio_values
+  filename        = "istio_values.yaml"
+  file_permission = "600"
+}
