@@ -1,14 +1,5 @@
-apiVersion: helm.cattle.io/v1
-kind: HelmChart
-metadata:
-  name: istio-base
-  namespace: kube-system
-spec:
-  repo: https://istio-release.storage.googleapis.com/charts
-  chart: base
-  version: ${version}
-  targetNamespace: ${target_namespace}
-  bootstrap: true
+# We're now installing Istio without using the base chart
+# Instead, CRDs are installed directly via kubectl and we proceed straight to istiod
 ---
 apiVersion: helm.cattle.io/v1
 kind: HelmChart
@@ -21,6 +12,7 @@ spec:
   version: ${version}
   targetNamespace: ${target_namespace}
   bootstrap: true
+  timeout: 600s
   valuesContent: |-
     ${values}
 ---
@@ -34,6 +26,7 @@ spec:
   chart: gateway
   version: ${version}
   targetNamespace: ${target_namespace}
+  timeout: 600s
   valuesContent: |-
     service:
       type: LoadBalancer
